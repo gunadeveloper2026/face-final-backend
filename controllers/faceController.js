@@ -8,10 +8,18 @@ exports.enroll = async (req, res) => {
   try {
     const userId = req.body.userId;
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+    const aiUrl = process.env.AI_SERVICE_URL;
+    if (!aiUrl) return res.status(500).json({ error: 'AI_SERVICE_URL is not configured' });
     const form = new FormData();
     form.append('image', fs.createReadStream(req.file.path), req.file.originalname);
-    const aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:6000/recognize';
-    const aiRes = await axios.post(aiUrl, form, { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity });
+    let aiRes;
+    try {
+      aiRes = await axios.post(aiUrl, form, { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity });
+    } catch (err) {
+      console.error('AI enroll request failed', { aiUrl, message: err.message, response: err.response?.data });
+      const message = err.response?.data?.error || err.response?.data?.message || err.message;
+      return res.status(500).json({ error: `AI service request failed: ${message}` });
+    }
     if (aiRes.data.error) return res.status(500).json({ error: aiRes.data.error });
     const embedding = aiRes.data.embedding;
     if (!embedding) return res.status(500).json({ error: 'No embedding returned from AI service' });
@@ -48,8 +56,16 @@ exports.recognize = async (req, res) => {
     const gallery = users.map(u => ({ id: u._id.toString(), embedding: u.faceEmbedding }));
     form.append('gallery', JSON.stringify(gallery));
 
-    const aiUrl = process.env.AI_SERVICE_URL || 'http://localhost:6000/recognize';
-    const aiRes = await axios.post(aiUrl, form, { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity });
+    const aiUrl = process.env.AI_SERVICE_URL;
+    if (!aiUrl) return res.status(500).json({ error: 'AI_SERVICE_URL is not configured' });
+    let aiRes;
+    try {
+      aiRes = await axios.post(aiUrl, form, { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity });
+    } catch (err) {
+      console.error('AI recognize request failed', { aiUrl, message: err.message, response: err.response?.data });
+      const message = err.response?.data?.error || err.response?.data?.message || err.message;
+      return res.status(500).json({ error: `AI service request failed: ${message}` });
+    }
     if (aiRes.data.error) return res.status(500).json({ error: aiRes.data.error });
 
     const best = aiRes.data.best;

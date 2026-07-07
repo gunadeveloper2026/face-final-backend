@@ -53,6 +53,8 @@ const seedAdmin = require('./config/seedAdmin');
 connectDB()
   .then(async () => {
     await seedAdmin();
+    const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:6000/recognize';
+    console.log(`AI service URL: ${aiServiceUrl}`);
     server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch((err) => {
