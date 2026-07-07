@@ -25,6 +25,21 @@ app.use('/api/users', userRoutes);
 
 app.use('/uploads', express.static('uploads'));
 
+app.get('/api/debug/admin', async (req, res) => {
+  try {
+    const email = process.env.ADMIN_EMAIL || 'admin@example.com';
+    const user = await User.findOne({ email });
+    return res.json({
+      adminEmail: email,
+      adminExists: !!user,
+      role: user?.role || null,
+      hasPassword: !!user?.password,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 const http = require('http');
 const { Server } = require('socket.io');
 
@@ -33,9 +48,11 @@ const io = new Server(server, { cors: { origin: '*' } });
 app.set('io', io);
 
 const connectDB = require('./config/db');
+const seedAdmin = require('./config/seedAdmin');
 
 connectDB()
-  .then(() => {
+  .then(async () => {
+    await seedAdmin();
     server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch((err) => {
