@@ -32,12 +32,14 @@ app.use('/api/users', userRoutes);
 app.get('/api/debug/admin', async (req, res) => {
   try {
     const email = process.env.ADMIN_EMAIL || 'admin@example.com';
+    const aiServiceUrl = process.env.AI_SERVICE_URL || null;
     const user = await User.findOne({ email });
     return res.json({
       adminEmail: email,
       adminExists: !!user,
       role: user?.role || null,
       hasPassword: !!user?.password,
+      aiServiceUrl,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
