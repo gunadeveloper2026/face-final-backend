@@ -3,11 +3,17 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 const User = require('./models/User');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const uploadsDir = path.join(__dirname, 'uploads');
+fs.mkdirSync(uploadsDir, { recursive: true });
+app.use('/uploads', express.static(uploadsDir));
 
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
@@ -22,8 +28,6 @@ app.use('/api/attendance', attendanceRoutes);
 
 const userRoutes = require('./routes/user');
 app.use('/api/users', userRoutes);
-
-app.use('/uploads', express.static('uploads'));
 
 app.get('/api/debug/admin', async (req, res) => {
   try {
