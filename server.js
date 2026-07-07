@@ -32,14 +32,15 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 app.set('io', io);
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/face-attendance', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(()=>{
-  server.listen(PORT, ()=> console.log(`Server running on port ${PORT}`));
-}).catch((err)=>{
-  console.error('DB connect error', err);
-});
+const connectDB = require('./config/db');
+
+connectDB()
+  .then(() => {
+    server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error('DB connect error', err);
+  });
 
 // Basic socket logging
 io.on('connection', (socket) => {
