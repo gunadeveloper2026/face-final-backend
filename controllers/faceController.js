@@ -4,11 +4,17 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 
+const normalizeAiUrl = (url) => {
+  if (!url) return null;
+  const trimmed = url.replace(/\/+$|\s+$/g, '');
+  return trimmed.endsWith('/recognize') ? trimmed : `${trimmed}/recognize`;
+};
+
 exports.enroll = async (req, res) => {
   try {
     const userId = req.body.userId;
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
-    const aiUrl = process.env.AI_SERVICE_URL;
+    const aiUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
     if (!aiUrl) return res.status(500).json({ error: 'AI_SERVICE_URL is not configured' });
     const form = new FormData();
     form.append('image', fs.createReadStream(req.file.path), req.file.originalname);
@@ -42,6 +48,10 @@ exports.enroll = async (req, res) => {
   } catch (err) {
     console.error('Enroll error:', err);
     res.status(500).json({ error: err.message });
+  } finally {
+    if (req.file && req.file.path) {
+      fs.unlink(req.file.path, () => {});
+    }
   }
 };
 
@@ -56,7 +66,7 @@ exports.recognize = async (req, res) => {
     const gallery = users.map(u => ({ id: u._id.toString(), embedding: u.faceEmbedding }));
     form.append('gallery', JSON.stringify(gallery));
 
-    const aiUrl = process.env.AI_SERVICE_URL;
+    const aiUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
     if (!aiUrl) return res.status(500).json({ error: 'AI_SERVICE_URL is not configured' });
     let aiRes;
     try {
@@ -76,5 +86,9 @@ exports.recognize = async (req, res) => {
     res.json({ ai: aiRes.data, user: matchedUser });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  } finally {
+    if (req.file && req.file.path) {
+      fs.unlink(req.file.path, () => {});
+    }
   }
 };

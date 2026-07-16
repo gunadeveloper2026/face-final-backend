@@ -7,6 +7,12 @@ const fs = require('fs');
 const path = require('path');
 const User = require('./models/User');
 
+const normalizeAiUrl = (url) => {
+  if (!url) return null;
+  const trimmed = url.replace(/\/+$|\s+$/g, '');
+  return trimmed.endsWith('/recognize') ? trimmed : `${trimmed}/recognize`;
+};
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -40,7 +46,7 @@ app.use('/api/users', userRoutes);
 app.get('/api/debug/admin', async (req, res) => {
   try {
     const email = process.env.ADMIN_EMAIL || 'admin@example.com';
-    const aiServiceUrl = process.env.AI_SERVICE_URL || null;
+    const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL) || null;
     const user = await User.findOne({ email });
     return res.json({
       adminEmail: email,
@@ -67,7 +73,7 @@ const seedAdmin = require('./config/seedAdmin');
 connectDB()
   .then(async () => {
     await seedAdmin();
-    const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:6000/recognize';
+    const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL) || 'http://localhost:6000/recognize';
     console.log(`AI service URL: ${aiServiceUrl}`);
     server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
