@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const axios = require('axios');
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
@@ -60,6 +61,31 @@ app.get('/api/debug/admin', async (req, res) => {
   }
 });
 
+app.get('/api/debug/ai', async (req, res) => {
+  const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
+  if (!aiServiceUrl) {
+    return res.status(500).json({
+      error: 'AI_SERVICE_URL is not configured. Set the env var to your deployed AI recognize endpoint.',
+    });
+  }
+
+  try {
+    const response = await axios.options(aiServiceUrl, { timeout: 5000 });
+    return res.json({
+      aiServiceUrl,
+      status: response.status,
+      statusText: response.statusText,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      error: 'AI service check failed',
+      message: err.message,
+      aiServiceUrl,
+      response: err.response?.data || err.response?.statusText || null,
+    });
+  }
+});
+
 const http = require('http');
 const { Server } = require('socket.io');
 
@@ -73,8 +99,12 @@ const seedAdmin = require('./config/seedAdmin');
 connectDB()
   .then(async () => {
     await seedAdmin();
-    const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL) || 'http://localhost:6000/recognize';
-    console.log(`AI service URL: ${aiServiceUrl}`);
+    const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
+    if (!aiServiceUrl) {
+      console.warn('WARNING: AI_SERVICE_URL is not configured. Face enroll/recognize routes will fail until this env var is set.');
+    } else {
+      console.log(`AI service URL: ${aiServiceUrl}`);
+    }
     server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch((err) => {
