@@ -61,6 +61,8 @@ app.get('/api/debug/admin', async (req, res) => {
   }
 });
 
+const FormData = require('form-data');
+
 app.get('/api/debug/ai', async (req, res) => {
   const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
   if (!aiServiceUrl) {
@@ -70,11 +72,20 @@ app.get('/api/debug/ai', async (req, res) => {
   }
 
   try {
-    const response = await axios.options(aiServiceUrl, { timeout: 5000 });
+    const form = new FormData();
+    const response = await axios.post(aiServiceUrl, form, {
+      headers: form.getHeaders(),
+      timeout: 5000,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      validateStatus: () => true,
+    });
+
     return res.json({
       aiServiceUrl,
       status: response.status,
       statusText: response.statusText,
+      response: response.data,
     });
   } catch (err) {
     return res.status(500).json({
