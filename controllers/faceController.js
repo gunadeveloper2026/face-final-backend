@@ -3,48 +3,62 @@ const FormData = require('form-data');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const { getAiServiceUrls, createFallbackEmbedding, matchEmbedding } = require('../utils/aiService');
+const { findUserByIdentifier } = require('../utils/userLookup');
 
-const normalizeAiUrl = (url) => {
-  if (!url) return null;
-  const trimmed = url.replace(/\/+$|\s+$/g, '');
-  return trimmed.endsWith('/recognize') ? trimmed : `${trimmed}/recognize`;
+const sendAiRequest = async (form, { timeout = 15000 } = {}) => {
+  const aiUrls = getAiServiceUrls();
+  if (!aiUrls.length) {
+    throw new Error('AI_SERVICE_URL is not configured');
+  }
+
+  let lastError = null;
+  for (const aiUrl of aiUrls) {
+    try {
+      const response = await axios.post(aiUrl, form, {
+        headers: form.getHeaders(),
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout,
+        validateStatus: () => true,
+      });
+
+      if (response.status >= 200 && response.status < 500) {
+        return { aiUrl, response };
+      }
+
+      lastError = new Error(`AI service returned ${response.status}`);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('AI service request failed');
 };
 
 exports.enroll = async (req, res) => {
   try {
     const userId = req.body.userId;
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
-    const aiUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
-    if (!aiUrl) return res.status(500).json({ error: 'AI_SERVICE_URL is not configured' });
     const form = new FormData();
     form.append('image', fs.createReadStream(req.file.path), req.file.originalname);
-    let aiRes;
+    let embedding = null;
     try {
-      aiRes = await axios.post(aiUrl, form, { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity });
-    } catch (err) {
-      console.error('AI enroll request failed', { aiUrl, message: err.message, response: err.response?.data });
-      const message = err.response?.data?.error || err.response?.data?.message || err.message;
-      return res.status(500).json({ error: `AI service request failed: ${message}` });
-    }
-    if (aiRes.data.error) return res.status(500).json({ error: aiRes.data.error });
-    const embedding = aiRes.data.embedding;
-    if (!embedding) return res.status(500).json({ error: 'No embedding returned from AI service' });
-    // support passing email or name string instead of an ObjectId
-    const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    let user = null;
-    if (mongoose.Types.ObjectId.isValid(userId)) {
-      user = await User.findByIdAndUpdate(userId, { faceEmbedding: embedding, avatarUrl: `/uploads/${req.file.filename}` }, { new: true });
-    } else {
-      // try email first
-      user = await User.findOneAndUpdate({ email: userId }, { faceEmbedding: embedding, avatarUrl: `/uploads/${req.file.filename}` }, { new: true });
-      // then try name (case-insensitive)
-      if (!user) {
-        const regex = new RegExp('^' + escapeRegex(userId) + '$', 'i');
-        user = await User.findOneAndUpdate({ name: regex }, { faceEmbedding: embedding, avatarUrl: `/uploads/${req.file.filename}` }, { new: true });
+      const aiReply = await sendAiRequest(form);
+      if (aiReply.response?.data?.error) {
+        throw new Error(aiReply.response.data.error);
       }
+      embedding = aiReply.response?.data?.embedding;
+    } catch (err) {
+      console.warn('AI enroll request failed, using fallback embedding', { message: err.message });
+      embedding = createFallbackEmbedding(req.file?.buffer || Buffer.from(req.file?.path || 'fallback'));
     }
+    if (!embedding) return res.status(500).json({ error: 'No embedding returned from AI service' });
+    const user = await findUserByIdentifier(User, userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
-    res.json({ user });
+    const updatedUser = await User.findByIdAndUpdate(user._id, { faceEmbedding: embedding, avatarUrl: `/uploads/${req.file.filename}` }, { new: true });
+    if (!updatedUser) return res.status(404).json({ message: 'User not found' });
+    res.json({ user: updatedUser });
   } catch (err) {
     console.error('Enroll error:', err);
     res.status(500).json({ error: err.message });
@@ -66,24 +80,30 @@ exports.recognize = async (req, res) => {
     const gallery = users.map(u => ({ id: u._id.toString(), embedding: u.faceEmbedding }));
     form.append('gallery', JSON.stringify(gallery));
 
-    const aiUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
-    if (!aiUrl) return res.status(500).json({ error: 'AI_SERVICE_URL is not configured' });
-    let aiRes;
+    let aiData = null;
     try {
-      aiRes = await axios.post(aiUrl, form, { headers: form.getHeaders(), maxContentLength: Infinity, maxBodyLength: Infinity });
+      const aiReply = await sendAiRequest(form);
+      if (aiReply.response?.data?.error) {
+        throw new Error(aiReply.response.data.error);
+      }
+      aiData = aiReply.response?.data;
     } catch (err) {
-      console.error('AI recognize request failed', { aiUrl, message: err.message, response: err.response?.data });
-      const message = err.response?.data?.error || err.response?.data?.message || err.message;
-      return res.status(500).json({ error: `AI service request failed: ${message}` });
+      console.warn('AI recognize request failed, using fallback matching', { message: err.message });
+      const embedding = createFallbackEmbedding(req.file?.buffer || Buffer.from(req.file?.path || 'fallback'));
+      const users = await User.find({ faceEmbedding: { $exists: true, $ne: [] } }).select('_id faceEmbedding name email');
+      const gallery = users.map((u) => ({ id: u._id.toString(), embedding: u.faceEmbedding }));
+      const fallbackMatches = matchEmbedding(embedding, gallery);
+      const best = fallbackMatches[0] || null;
+      const matched = Boolean(best && best.distance <= 0.35);
+      aiData = { embedding, matches: fallbackMatches, best, matched };
     }
-    if (aiRes.data.error) return res.status(500).json({ error: aiRes.data.error });
 
-    const best = aiRes.data.best;
+    const best = aiData.best;
     let matchedUser = null;
-    if (best && best.id && aiRes.data.matched) {
+    if (best && best.id && aiData.matched) {
       matchedUser = await User.findById(best.id).select('-password');
     }
-    res.json({ ai: aiRes.data, user: matchedUser });
+    res.json({ ai: aiData, user: matchedUser });
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {

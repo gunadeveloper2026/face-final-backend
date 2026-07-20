@@ -8,11 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const User = require('./models/User');
 
-const normalizeAiUrl = (url) => {
-  if (!url) return null;
-  const trimmed = url.replace(/\/+$|\s+$/g, '');
-  return trimmed.endsWith('/recognize') ? trimmed : `${trimmed}/recognize`;
-};
+const { getAiServiceUrls } = require('./utils/aiService');
 
 const app = express();
 app.use(cors());
@@ -47,14 +43,14 @@ app.use('/api/users', userRoutes);
 app.get('/api/debug/admin', async (req, res) => {
   try {
     const email = process.env.ADMIN_EMAIL || 'admin@example.com';
-    const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL) || null;
+    const aiServiceUrls = getAiServiceUrls();
     const user = await User.findOne({ email });
     return res.json({
       adminEmail: email,
       adminExists: !!user,
       role: user?.role || null,
       hasPassword: !!user?.password,
-      aiServiceUrl,
+      aiServiceUrls,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -64,8 +60,8 @@ app.get('/api/debug/admin', async (req, res) => {
 const FormData = require('form-data');
 
 app.get('/api/debug/ai', async (req, res) => {
-  const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
-  if (!aiServiceUrl) {
+  const aiServiceUrls = getAiServiceUrls();
+  if (!aiServiceUrls.length) {
     return res.status(500).json({
       error: 'AI_SERVICE_URL is not configured. Set the env var to your deployed AI recognize endpoint.',
     });
@@ -73,25 +69,47 @@ app.get('/api/debug/ai', async (req, res) => {
 
   try {
     const form = new FormData();
-    const response = await axios.post(aiServiceUrl, form, {
-      headers: form.getHeaders(),
-      timeout: 5000,
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-      validateStatus: () => true,
-    });
+    let lastError = null;
+    let lastResponse = null;
 
-    return res.json({
-      aiServiceUrl,
-      status: response.status,
-      statusText: response.statusText,
-      response: response.data,
+    for (const aiServiceUrl of aiServiceUrls) {
+      try {
+        const response = await axios.post(aiServiceUrl, form, {
+          headers: form.getHeaders(),
+          timeout: 5000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          validateStatus: () => true,
+        });
+
+        if (response.status >= 200 && response.status < 500) {
+          return res.json({
+            aiServiceUrl,
+            status: response.status,
+            statusText: response.statusText,
+            response: response.data,
+          });
+        }
+
+        lastError = new Error(`AI service returned ${response.status}`);
+        lastResponse = response.data;
+      } catch (err) {
+        lastError = err;
+        lastResponse = err.response?.data || err.response?.statusText || null;
+      }
+    }
+
+    return res.status(500).json({
+      error: 'AI service check failed',
+      message: lastError?.message || 'No AI service responded',
+      aiServiceUrls,
+      response: lastResponse,
     });
   } catch (err) {
     return res.status(500).json({
       error: 'AI service check failed',
       message: err.message,
-      aiServiceUrl,
+      aiServiceUrls,
       response: err.response?.data || err.response?.statusText || null,
     });
   }
@@ -110,11 +128,11 @@ const seedAdmin = require('./config/seedAdmin');
 connectDB()
   .then(async () => {
     await seedAdmin();
-    const aiServiceUrl = normalizeAiUrl(process.env.AI_SERVICE_URL);
-    if (!aiServiceUrl) {
+    const aiServiceUrls = getAiServiceUrls();
+    if (!aiServiceUrls.length) {
       console.warn('WARNING: AI_SERVICE_URL is not configured. Face enroll/recognize routes will fail until this env var is set.');
     } else {
-      console.log(`AI service URL: ${aiServiceUrl}`);
+      console.log(`AI service URLs: ${aiServiceUrls.join(', ')}`);
     }
     server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
