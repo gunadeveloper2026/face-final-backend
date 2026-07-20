@@ -44,6 +44,51 @@ exports.markAttendance = async (req, res) => {
     const io = req.app.get('io');
     if (io) io.emit('attendance:marked', { attendance: populated });
 
+    // emit updated dashboard summary for realtime UI
+    try {
+      const now = new Date();
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      const tomorrowStart = new Date(todayStart);
+      tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+
+      const weekStart = new Date(todayStart);
+      weekStart.setDate(weekStart.getDate() - 6);
+
+      const [totalEmployees, todayCount, lateCount, statusResults, dailyTrendResults] = await Promise.all([
+        User.countDocuments(),
+        Attendance.countDocuments({ date: { $gte: todayStart, $lt: tomorrowStart } }),
+        Attendance.countDocuments({ date: { $gte: todayStart, $lt: tomorrowStart }, status: 'late' }),
+        Attendance.aggregate([
+          { $match: { date: { $gte: weekStart, $lt: tomorrowStart } } },
+          { $group: { _id: '$status', count: { $sum: 1 } } }
+        ]),
+        Attendance.aggregate([
+          { $match: { date: { $gte: weekStart, $lt: tomorrowStart } } },
+          { $group: { _id: { day: { $dateToString: { format: '%Y-%m-%d', date: '$date' } } }, count: { $sum: 1 } } },
+          { $sort: { '_id.day': 1 } }
+        ])
+      ]);
+
+      const statusCounts = { present: 0, late: 0, absent: 0 };
+      statusResults.forEach((item) => { statusCounts[item._id] = item.count; });
+
+      const dailyTrend = [];
+      const dayMap = new Map();
+      dailyTrendResults.forEach((item) => { dayMap.set(item._id.day, item.count); });
+      for (let i = 0; i < 7; i += 1) {
+        const date = new Date(weekStart);
+        date.setDate(weekStart.getDate() + i);
+        const label = date.toISOString().slice(0, 10);
+        dailyTrend.push({ day: label, count: dayMap.get(label) || 0 });
+      }
+
+      const dashboard = { totalEmployees, todayCount, lateCount, statusCounts, dailyTrend, updatedAt: new Date() };
+      if (io) io.emit('dashboard.update', dashboard);
+    } catch (emitErr) {
+      console.error('Failed to emit dashboard update', emitErr);
+    }
+
     res.json({ attendance: populated });
   } catch (err) {
     console.error('Attendance mark error:', err);
