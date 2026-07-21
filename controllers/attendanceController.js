@@ -83,7 +83,16 @@ exports.markAttendance = async (req, res) => {
         dailyTrend.push({ day: label, count: dayMap.get(label) || 0 });
       }
 
-      const dashboard = { totalEmployees, todayCount, lateCount, statusCounts, dailyTrend, updatedAt: new Date() };
+      const reportsPending = Math.max(0, totalEmployees - todayCount);
+      const dashboard = {
+        totalEmployees,
+        todayCount,
+        lateCount,
+        reportsPending,
+        statusCounts,
+        dailyTrend,
+        updatedAt: new Date()
+      };
       if (io) io.emit('dashboard.update', dashboard);
     } catch (emitErr) {
       console.error('Failed to emit dashboard update', emitErr);
@@ -248,7 +257,17 @@ exports.adminSummary = async (req, res) => {
       dailyTrend.push({ day: label, count: dayMap.get(label) || 0 });
     }
 
-    res.json({ totalEmployees, todayCount, lateCount, statusCounts, dailyTrend });
+    const reportsPending = Math.max(0, totalEmployees - todayCount);
+
+    res.json({
+      totalEmployees,
+      todayCount,
+      lateCount,
+      reportsPending,
+      statusCounts,
+      dailyTrend,
+      updatedAt: new Date()
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
